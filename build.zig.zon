@@ -1,0 +1,17 @@
+.{
+    .name = .chip8,
+    .version = "0.0.0",
+    .fingerprint = 0xa61914ab79ea9802,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .sdl3 = .{
+            .url = "git+https://github.com/Gota7/zig-sdl3?ref=v0.1.1#694ffacd7c2c0b83aaa7a9bb1e279d7b39ea9aee",
+            .hash = "sdl3-0.1.1-NmT1QwTgIADixpCS2g5pBBON5AEfnjOox94dU0dtT-tq",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
