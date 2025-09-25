@@ -4,10 +4,18 @@ const std = @import("std");
 const sdl3 = @import("sdl3");
 const Allocator = std.mem.Allocator;
 
+const timer_freq = 1000.0 / 60.0;
+
 const display_width = 64;
 const display_height = 32;
 
 const mem_size = 4096;
+
+pub const RenderState = struct {
+    renderer: sdl3.render.Renderer,
+    width: usize,
+    height: usize,
+};
 
 mem: [mem_size]u8,
 display: [display_width * display_height]bool,
@@ -15,7 +23,9 @@ key: [16]bool,
 stack: [16]u16,
 v: [16]u8,
 allocator: Allocator,
-window: sdl3.video.Window,
+renderer: sdl3.render.Renderer,
+width: usize,
+height: usize,
 time_delta: u64,
 timers_acc: u64,
 I: u16,
@@ -140,7 +150,7 @@ const sprites = [_][]const u8{
     \\
 };
 
-pub fn init(allocator: Allocator, data: []u8, window: sdl3.video.Window) Self {
+pub fn init(allocator: Allocator, data: []u8, render_state: RenderState) Self {
     var mem: [mem_size]u8 = .{0} ** mem_size;
     var pos: usize = 0;
     for (sprites) |sprite| {
@@ -163,10 +173,13 @@ pub fn init(allocator: Allocator, data: []u8, window: sdl3.video.Window) Self {
     for (data, 0..) |byte, i| {
         mem[0x200 + i] = byte;
     }
+
     return .{
         .allocator = allocator,
-        .window = window,
-        .time_delta = 0.0,
+        .renderer = render_state.renderer,
+        .width = render_state.width,
+        .height = render_state.height,
+        .time_delta = 0,
         .timers_acc = 0,
         .mem = mem,
         .display = .{false} ** (display_width * display_height),
@@ -193,40 +206,46 @@ pub fn run(self: *Self) !void {
     });
 
     var prev = sdl3.timer.getMillisecondsSinceInit();
+
+    try self.render();
+
     while (self.is_running) {
-        self.processInput();
-        self.dumpKeys();
         const next = sdl3.timer.getMillisecondsSinceInit();
         defer prev = next;
         self.time_delta = next - prev;
+
+        self.processInput();
+        // self.dumpKeys();
         self.decTimers();
         if (self.fetchU16()) |inst| {
             self.execute(inst);
         } else |_| {}
 
         try self.render();
+        sdl3.timer.delayNanoseconds(std.time.ns_per_us * 1500);
         // self.dumpDisplay();
     }
 }
 
 fn render(self: *Self) !void {
-    const surface = try self.window.getSurface();
-    const size = try self.window.getSize();
-    const xsize = size.width / display_width;
-    const ysize = size.height / display_height;
-    try surface.clear(.{});
-    const w: i32 = @intCast(xsize);
-    const h: i32 = @intCast(ysize);
+    try self.renderer.setDrawColorFloat(.{ .r = 0, .b = 0, .g = 0, .a = 1.0 });
+    try self.renderer.clear();
+
+    const xsize = self.width / display_width;
+    const ysize = self.height / display_height;
+    const w: f32 = @floatFromInt(xsize);
+    const h: f32 = @floatFromInt(ysize);
+    try self.renderer.setDrawColorFloat(.{ .r = 0, .g = 1.0, .b = 1.0, .a = 1.0 });
     for (self.display, 0..) |pixel, pos| {
         if (pixel) {
-            const tx: i32 = @intCast(pos % display_width);
-            const ty: i32 = @intCast(pos / display_width);
+            const tx: f32 = @floatFromInt(pos % display_width);
+            const ty: f32 = @floatFromInt(pos / display_width);
             const x = tx * w;
             const y = ty * w;
-            try surface.fillRect(.{ .x = x, .y = y, .w = w, .h = h }, sdl3.pixels.mapSurfaceRgb(surface, 0, 0xff, 0xff));
+            try self.renderer.renderFillRect(.{ .x = x, .y = y, .w = w, .h = h });
         }
     }
-    try self.window.updateSurface();
+    try self.renderer.present();
 }
 
 fn keycodeToKey(keycode: sdl3.keycode.Keycode) ?Keys {
@@ -257,7 +276,7 @@ fn keycodeToKey(keycode: sdl3.keycode.Keycode) ?Keys {
 fn processInput(self: *Self) void {
     while (sdl3.events.poll()) |event| {
         switch (event) {
-            .quit => {
+            .quit, .terminating => {
                 self.is_running = false;
             },
             .key_down => |key| {
@@ -292,9 +311,10 @@ fn processInput(self: *Self) void {
 }
 
 fn waitKey(self: *Self) Keys {
+    self.last_wait_input = null;
     while (self.is_running) {
-        sdl3.events.wait() catch unreachable;
         self.processInput();
+        self.decTimers();
         if (self.last_wait_input) |key| {
             self.last_wait_input = null;
             return key;
@@ -360,11 +380,10 @@ fn keyUp(self: *Self, key: Keys) void {
     self.key[key.index()] = false;
 }
 
-const timer_freq: f32 = 1000.0 / 60.0;
-
 fn decTimers(self: *Self) void {
     self.timers_acc += self.time_delta;
-    if (@as(f32, @floatFromInt(self.timers_acc)) >= timer_freq) {
+    const acc: f32 = @floatFromInt(self.timers_acc);
+    if (acc > timer_freq) {
         self.timers_acc = 0;
         if (self.dt > 0) {
             self.dt -= 1;
@@ -479,7 +498,7 @@ fn execute(self: *Self, inst: u16) void {
             self.I = addr(inst);
         },
         0xb => {
-            self.pc = addr(inst) + self.v[0];
+            self.pc = addr(inst) + self.v[n2(inst)];
         },
         0xc => {
             self.v[n2(inst)] = rand() & b2(inst);
@@ -487,7 +506,9 @@ fn execute(self: *Self, inst: u16) void {
         0xd => {
             const x = self.v[n2(inst)];
             const y = self.v[n3(inst)];
-            const n = n4(inst);
+            const height = n4(inst);
+            self.v[0xf] = 0;
+            const n = if (height == 0) 16 else @as(u8, height);
             const sprite = self.mem[self.I .. self.I + n];
             // dumpSprite(sprite);
             self.draw(sprite, x, y);
@@ -601,17 +622,21 @@ fn dumpKeys(self: *Self) void {
 }
 
 fn draw(self: *Self, sprite: []const u8, x: u8, y: u8) void {
+    const ax = x % display_width;
+    const ay = y % display_height;
     for (sprite, 0..) |line, i| {
-        const pos = x + (y + i) * display_width;
+        const pos = ax + (ay + i) * display_width;
         for (0..8) |j| {
             const index = pos + j;
             if (index >= self.display.len) break;
-            const one: u8 = 1;
-            const sh = 7 - @as(u3, @intCast(j));
-            const value = line & (one << sh) != 0;
-            const prev = self.display[index];
-            self.v[0xf] = @intFromBool(prev and value == false);
-            self.display[index] = prev ^ value;
+            const hi: u8 = 0x80;
+            const sh: u3 = @intCast(j);
+            const value = line & (hi >> sh) != 0;
+            if (value) {
+                const prev = self.display[index];
+                self.v[0xf] = @intFromBool(prev);
+                self.display[index] = prev ^ value;
+            }
         }
     }
     // self.dumpDisplay();

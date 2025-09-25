@@ -4,6 +4,8 @@ const VM = @import("VM.zig");
 
 const Allocator = std.mem.Allocator;
 
+const title = "App";
+
 var allocator: Allocator = undefined;
 
 fn loadRom(name: []const u8) ![]u8 {
@@ -69,14 +71,15 @@ pub fn main() !void {
     width = @intFromFloat(@as(f32, @floatFromInt(width)) * scale);
     height = @intFromFloat(@as(f32, @floatFromInt(height)) * scale);
 
-    const window = try sdl3.video.Window.init("App", width, height, .{});
-    defer window.deinit();
+    const window_renderer = try sdl3.render.Renderer.initWithWindow(title, width, height, .{});
+    defer window_renderer.renderer.deinit();
+    defer window_renderer.window.deinit();
 
     sdl3.errors.error_callback = sdlErrCallback;
     const rom = try loadRom(rom_path);
     defer allocator.free(rom);
 
-    var vm = VM.init(allocator, rom, window);
+    var vm = VM.init(allocator, rom, .{ .renderer = window_renderer.renderer, .width = width, .height = height });
 
     try vm.run();
 }
