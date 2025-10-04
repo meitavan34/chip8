@@ -10,6 +10,7 @@ var allocator: Allocator = undefined;
 
 fn loadRom(name: []const u8) ![]u8 {
     var file = try std.fs.cwd().openFile(name, .{});
+    defer file.close();
 
     return try file.readToEndAlloc(allocator, std.math.maxInt(usize));
 }
@@ -42,7 +43,7 @@ pub fn main() !void {
 
     var width: usize = 640;
     var height: usize = 320;
-    var scale: f32 = 0.0;
+    var scale: f32 = 1.0;
 
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "-w")) {
